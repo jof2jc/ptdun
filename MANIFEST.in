@@ -1,0 +1,18 @@
+include MANIFEST.in
+include requirements.txt
+include *.json
+include *.md
+include *.py
+include *.txt
+recursive-include ptdun *.css
+recursive-include ptdun *.csv
+recursive-include ptdun *.html
+recursive-include ptdun *.ico
+recursive-include ptdun *.js
+recursive-include ptdun *.json
+recursive-include ptdun *.md
+recursive-include ptdun *.png
+recursive-include ptdun *.py
+recursive-include ptdun *.svg
+recursive-include ptdun *.txt
+recursive-exclude ptdun *.pyc
