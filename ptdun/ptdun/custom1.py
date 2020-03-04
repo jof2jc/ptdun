@@ -43,10 +43,14 @@ def set_per_billed_in_so_dn(doc, method):
 	if doc.is_return:
 		dn = ""
 		for d in doc.items:
+			if not d.delivery_note and "delivery_note_no" in frappe.db.get_table_columns(d.doctype):
+				d.delivery_note = d.delivery_note_no
+
 			if dn != d.delivery_note:
 				dn = d.delivery_note
 			else:
 				continue
+
 			if d.delivery_note and doc.is_return and doc.docstatus == 1:
 				del_note = frappe.get_doc("Delivery Note",d.delivery_note)
 				if not del_note.return_status and (0 < del_note.per_billed < 100.0):
@@ -75,10 +79,17 @@ def set_per_billed_in_so_dn(doc, method):
 
 					if ref_dn.return_status != "":
 						ref_dn.db_set("return_status", "")
+
+			if "delivery_note_no" in frappe.db.get_table_columns(d.doctype) and d.delivery_note:
+				d.delivery_note=""
+
 	elif doc.docstatus == 1:
 		dn = ""
 		so = ""
 		for d in doc.items:
+			if not d.delivery_note and "delivery_note_no" in frappe.db.get_table_columns(d.doctype):
+				d.delivery_note = d.delivery_note_no
+
 			if dn != d.delivery_note:
 				dn = d.delivery_note
 			else:
@@ -102,13 +113,17 @@ def set_per_billed_in_so_dn(doc, method):
 				billed_qty = flt(frappe.db.sql("""SELECT ifnull(sum(qty), 0) as billed_qty FROM `tabSales Invoice` si INNER JOIN `tabSales Invoice Item` it 
 					ON si.name=it.parent where si.docstatus=1 and it.delivery_note=%s and si.is_return != 1""", (d.delivery_note))[0][0])
 
-				per_billed = ((ref_dn_qty if billed_qty > ref_dn_qty else billed_qty)/ ref_dn_qty)*100
+				per_billed = ((ref_dn_qty if billed_qty > ref_dn_qty else billed_qty)/ ref_dn_qty if ref_dn_qty else 1.0)*100
 				#frappe.msgprint(cstr(per_billed))
 		
 				if (0 <= ref_dn.per_billed < 100.0) and per_billed >= 100.0 and doc.docstatus == 1:
 					ref_dn.db_set("per_billed", "100")
 					ref_dn.db_set("return_status", "")
 					ref_dn.set_status(update=True)
+
+			if "delivery_note_no" in frappe.db.get_table_columns(d.doctype) and d.delivery_note:
+				d.delivery_note=""
+
 		for d in doc.items:
 			if so != d.sales_order:
 				so = d.sales_order
@@ -136,16 +151,50 @@ def set_per_billed_in_so_dn(doc, method):
 def set_per_delivered_in_so(self, method):
 	if not self.is_return:
 		return
-	elif not self.no_replacement:
-		return
+	#elif not self.no_replacement:
+	#	return
 
 	ref_dn = frappe.get_doc(self.doctype,self.return_against)
 	per_delivered = 100.0
 
 	if self.docstatus == 1 or self.docstatus == 2:
+		''' update ref_dn status '''
+		ref_dn_qty = flt(frappe.db.sql("""select ifnull(sum(qty), 0) from `tabDelivery Note Item`
+		where parent=%s""", (ref_dn.name))[0][0])
+		#print 'ref_dn_qty=' + cstr(ref_dn_qty)
+
+		return_qty = flt(frappe.db.sql("""SELECT ifnull(sum(qty*-1), 0) as return_qty FROM `tabDelivery Note` si INNER JOIN `tabDelivery Note Item` it 
+					ON si.name=it.parent where si.docstatus=1 and si.return_against=%s and si.is_return = 1""", (ref_dn.name))[0][0])
+
+		billed_qty = flt(frappe.db.sql("""SELECT ifnull(sum(qty), 0) as billed_qty FROM `tabSales Invoice` si INNER JOIN `tabSales Invoice Item` it 
+				ON si.name=it.parent where si.docstatus=1 and it.delivery_note=%s and si.is_return != 1""", (ref_dn.name))[0][0])
+		#billed_qty = 100
+		#print 'billed_qty=' + cstr(billed_qty)
+
+		per_billed = ((ref_dn_qty if billed_qty > ref_dn_qty else billed_qty)/ ref_dn_qty if ref_dn_qty else 1.0)*100
+		#print 'per_billed=' + cstr(per_billed)
+
+		#frappe.msgprint(_("billed_qty = {0}, pref_dn_qty = {1}, per_billed = {2}").format(billed_qty, ref_dn_qty, per_billed))
+
+		per_return = ((return_qty if return_qty else 0.0) / ref_dn_qty)*100.0
+
+		if (0 <= ref_dn.per_billed < 100.0) and per_billed >= 100.0:
+			ref_dn.db_set("per_billed", "100")
+			ref_dn.db_set("return_status", "")
+			self.db_set("return_status", "")
+			ref_dn.set_status(update=True)
+		elif self.docstatus ==1 and per_return >= 100.0:
+			ref_dn.db_set("per_billed", per_return)
+			ref_dn.set_status(update=True)
+		elif self.docstatus == 2 and per_billed == 0: # return is cancelled then reset previous DLN status
+			ref_dn.db_set("per_billed", per_billed)
+			ref_dn.set_status(update=True)
+
+
+		''' update ref_so status '''
 		so = ""
 		for d in self.items:
-			if d.against_sales_order: #get ref sales order
+			if d.against_sales_order and self.no_replacement: #get ref sales order
 				if so != d.against_sales_order:
 					so = d.against_sales_order
 				else:
@@ -178,26 +227,5 @@ def set_per_delivered_in_so(self, method):
 					ref_so.db_set("per_billed", per_billed)
 					ref_so.set_status(update=True)
 
-
-
-		ref_dn_qty = flt(frappe.db.sql("""select ifnull(sum(qty), 0) from `tabDelivery Note Item`
-		where parent=%s""", (ref_dn.name))[0][0])
-		#print 'ref_dn_qty=' + cstr(ref_dn_qty)
-
-		billed_qty = flt(frappe.db.sql("""SELECT ifnull(sum(qty), 0) as billed_qty FROM `tabSales Invoice` si INNER JOIN `tabSales Invoice Item` it 
-				ON si.name=it.parent where si.docstatus=1 and it.delivery_note=%s and si.is_return != 1""", (ref_dn.name))[0][0])
-		#billed_qty = 100
-		#print 'billed_qty=' + cstr(billed_qty)
-
-		per_billed = ((ref_dn_qty if billed_qty > ref_dn_qty else billed_qty)/ ref_dn_qty if ref_dn_qty else 1.0)*100
-		#print 'per_billed=' + cstr(per_billed)
-
-		#frappe.msgprint(_("billed_qty = {0}, pref_dn_qty = {1}, per_billed = {2}").format(billed_qty, ref_dn_qty, per_billed))
-
-		if (0 <= ref_dn.per_billed < 100.0) and per_billed >= 100.0:
-			ref_dn.db_set("per_billed", "100")
-			ref_dn.db_set("return_status", "")
-			self.db_set("return_status", "")
-			ref_dn.set_status(update=True)
-		
-
+				if per_return >= 100.0 and (ref_so.per_billed < 100.0 or ref_so.per_delivered < 100.0):
+					ref_so.set_status(update=True, status="Closed")	
